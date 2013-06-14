@@ -31,3 +31,12 @@ Then, kill with:
 killall -SIGUSR2 appname
 
 It will show the output of malloc_stats(3) on stderr of the application.
+
+* Credits
+
+The design of this library is inspired by this presentation:
+
+"Tips of malloc & free"
+Tetsuyuki Kobayashi
+2013.2.22 Embedded Linux Conference
+http://events.linuxfoundation.org/images/stories/slides/elc2013_kobayashi_malloc.pdf
