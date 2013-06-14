@@ -1,0 +1,33 @@
+Memleak finder
+Mathieu Desnoyers, May 2013
+
+* memleak-finder.so
+
+example usage:
+LD_PRELOAD=<path_to>/memleak-finder.so appname
+
+If you get e.g.:
+
+[warning] trying to free unallocated ptr 0x18b2a70 caller 0x7fae7943dd57
+or
+[leak] ptr: 0x18b2350 size: 0x160 caller: 0x7fae7943e28f <symbol>
+
+If you need to see local symbols as well ("static" function), you will
+need to use gdb "disassemble 0x...". A trick to hook gdb on the program
+after the leak printout is to add an assert(0) at the end of the library
+destructor, and run the program after issuing ulimit -c unlimited to
+gather a core dump of the application.
+
+You can set the MEMLEAK_FINDER_PRINT environment variable to make the
+shared object print every allocation/free on stderr.
+
+
+* malloc-stats.so
+
+LD_PRELOAD=<path_to>/malloc-stats.so appname
+
+Then, kill with:
+
+killall -SIGUSR2 appname
+
+It will show the output of malloc_stats(3) on stderr of the application.
