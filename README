@@ -32,6 +32,18 @@ killall -SIGUSR2 appname
 
 It will show the output of malloc_stats(3) on stderr of the application.
 
+Example output:
+
+Arena 0:
+system bytes     =     135168
+in use bytes     =      19360
+Total (incl. mmap):
+system bytes     =     135168
+in use bytes     =      19360
+max mmap regions =          0
+max mmap bytes   =          0
+
+
 * Credits
 
 The design of this library is inspired by this presentation:
