@@ -16,7 +16,9 @@ If you need to see local symbols as well ("static" function), you will
 need to use gdb "disassemble 0x...". A trick to hook gdb on the program
 after the leak printout is to add an assert(0) at the end of the library
 destructor, and run the program after issuing ulimit -c unlimited to
-gather a core dump of the application.
+gather a core dump of the application. Don't forget to compile your
+program and libraries, and install the "-dbg" versions of the system
+libraries if you want the make sure gdb can lookup their local symbols.
 
 You can set the MEMLEAK_FINDER_PRINT environment variable to make the
 shared object print every allocation/free on stderr.
