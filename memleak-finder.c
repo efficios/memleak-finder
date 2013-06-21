@@ -41,6 +41,7 @@ static void *(*callocp)(size_t, size_t);
 static void *(*mallocp)(size_t);
 static void *(*reallocp)(void *, size_t);
 static void *(*memalignp)(size_t, size_t);
+static int  (*posix_memalignp)(void **, size_t, size_t);
 static void (*freep)(void *);
 
 static volatile int initialized;
@@ -141,6 +142,7 @@ do_init(void)
 	mallocp = (void *(*) (size_t)) dlsym (RTLD_NEXT, "malloc");
 	reallocp = (void *(*) (void *, size_t)) dlsym (RTLD_NEXT, "realloc");
 	memalignp = (void *(*)(size_t, size_t)) dlsym (RTLD_NEXT, "memalign");
+	posix_memalignp = (int (*)(void **, size_t, size_t)) dlsym (RTLD_NEXT, "posix_memalign");
 	freep = (void (*) (void *)) dlsym (RTLD_NEXT, "free");
 
 	env = getenv("MEMLEAK_FINDER_PRINT");
@@ -293,6 +295,39 @@ memalign(size_t alignment, size_t size)
 	if (print_to_console)
 		fprintf(stderr, "memalign(%zu,%zu) returns %p\n",
 			alignment, size, result);
+
+	pthread_mutex_unlock(&mh_mutex);
+
+	thread_in_hook = 0;
+
+	return result;
+}
+
+int
+posix_memalign(void **memptr, size_t alignment, size_t size)
+{
+	int result;
+	const void *caller = __builtin_return_address(0);
+
+	do_init();
+
+	if (thread_in_hook) {
+		return posix_memalignp(memptr, alignment, size);
+	}
+
+	thread_in_hook = 1;
+
+	pthread_mutex_lock(&mh_mutex);
+
+	/* Call resursively */
+	result = posix_memalignp(memptr, alignment, size);
+
+	add_mh(*memptr, size, caller);
+
+	/* printf might call malloc, so protect it too. */
+	if (print_to_console)
+		fprintf(stderr, "posix_memalign(%p,%zu,%zu) returns %d\n",
+			memptr, alignment, size, result);
 
 	pthread_mutex_unlock(&mh_mutex);
 
