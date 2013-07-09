@@ -35,6 +35,7 @@
 #include <assert.h>
 #include <stdarg.h>
 #include <execinfo.h>
+#include <sys/epoll.h>
 #include "hlist.h"
 
 #include "jhash.h"
@@ -60,6 +61,8 @@ static int (*accept4p)(int sockfd, struct sockaddr *addr, socklen_t *addrlen,
 static int (*shm_openp)(const char *name, int oflag, mode_t mode);
 static int (*pipep)(int pipefd[2]);
 static int (*pipe2p)(int pipefd[2], int flags);
+static int (*epoll_createp)(int size);
+static int (*epoll_create1p)(int flags);
 static int (*closep)(int fd);
 /* TODO: recvmsg, recvmmsg unix socket */
 
@@ -234,6 +237,8 @@ do_init(void)
 	shm_openp = (int (*) (const char *, int, mode_t)) dlsym(RTLD_NEXT, "shm_open");
 	pipep = (int (*) (int [2])) dlsym(RTLD_NEXT, "pipe");
 	pipe2p = (int (*) (int [2], int)) dlsym(RTLD_NEXT, "pipe2");
+	epoll_createp = (int (*) (int)) dlsym(RTLD_NEXT, "epoll_create");
+	epoll_create1p = (int (*) (int)) dlsym(RTLD_NEXT, "epoll_create1");
 	closep = (int (*) (int)) dlsym(RTLD_NEXT, "close");
 
 	env = getenv("FDLEAK_FINDER_PRINT");
@@ -272,9 +277,10 @@ int open(const char *pathname, int flags, ...)
 
 	/* Call resursively */
 	result = openp(pathname, flags, mode);
-
-	save_backtrace(&bt);
-	add_fd(result, caller, &bt);
+	if (result >= 0) {
+		save_backtrace(&bt);
+		add_fd(result, caller, &bt);
+	}
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
@@ -307,9 +313,10 @@ int creat(const char *pathname, mode_t mode)
 
 	/* Call resursively */
 	result = creatp(pathname, mode);
-
-	save_backtrace(&bt);
-	add_fd(result, caller, &bt);
+	if (result >= 0) {
+		save_backtrace(&bt);
+		add_fd(result, caller, &bt);
+	}
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
@@ -341,9 +348,10 @@ int dup(int oldfd)
 
 	/* Call resursively */
 	result = dupp(oldfd);
-
-	save_backtrace(&bt);
-	add_fd(result, caller, &bt);
+	if (result >= 0) {
+		save_backtrace(&bt);
+		add_fd(result, caller, &bt);
+	}
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
@@ -449,9 +457,10 @@ int socket(int domain, int type, int protocol)
 
 	/* Call resursively */
 	result = socketp(domain, type, protocol);
-
-	save_backtrace(&bt);
-	add_fd(result, caller, &bt);
+	if (result >= 0) {
+		save_backtrace(&bt);
+		add_fd(result, caller, &bt);
+	}
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
@@ -483,9 +492,10 @@ int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 
 	/* Call resursively */
 	result = acceptp(sockfd, addr, addrlen);
-
-	save_backtrace(&bt);
-	add_fd(result, caller, &bt);
+	if (result >= 0) {
+		save_backtrace(&bt);
+		add_fd(result, caller, &bt);
+	}
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
@@ -518,9 +528,10 @@ int accept4(int sockfd, struct sockaddr *addr, socklen_t *addrlen,
 
 	/* Call resursively */
 	result = accept4p(sockfd, addr, addrlen, flags);
-
-	save_backtrace(&bt);
-	add_fd(result, caller, &bt);
+	if (result >= 0) {
+		save_backtrace(&bt);
+		add_fd(result, caller, &bt);
+	}
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
@@ -552,9 +563,10 @@ int shm_open(const char *name, int oflag, mode_t mode)
 
 	/* Call resursively */
 	result = shm_openp(name, oflag, mode);
-
-	save_backtrace(&bt);
-	add_fd(result, caller, &bt);
+	if (result >= 0) {
+		save_backtrace(&bt);
+		add_fd(result, caller, &bt);
+	}
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
@@ -586,13 +598,13 @@ int pipe(int pipefd[2])
 
 	/* Call resursively */
 	result = pipep(pipefd);
-
 	if (!result) {
 		save_backtrace(&bt[0]);
 		save_backtrace(&bt[1]);
 		add_fd(pipefd[0], caller, &bt[0]);
 		add_fd(pipefd[1], caller, &bt[1]);
 	}
+
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
 		fprintf(stderr, "pipe([%d,%d]) returns %d\n",
@@ -623,17 +635,85 @@ int pipe2(int pipefd[2], int flags)
 
 	/* Call resursively */
 	result = pipe2p(pipefd, flags);
-
 	if (!result) {
 		save_backtrace(&bt[0]);
 		save_backtrace(&bt[1]);
 		add_fd(pipefd[0], caller, &bt[0]);
 		add_fd(pipefd[1], caller, &bt[1]);
 	}
+
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
 		fprintf(stderr, "pipe2([%d,%d], %d) returns %d\n",
 			pipefd[0], pipefd[1], flags, result);
+
+	pthread_mutex_unlock(&fd_mutex);
+
+	thread_in_hook = 0;
+
+	return result;
+}
+
+int epoll_create(int size)
+{
+	int result;
+	const void *caller = __builtin_return_address(0);
+	struct backtrace bt;
+
+	do_init();
+
+	if (thread_in_hook) {
+		return epoll_createp(size);
+	}
+
+	thread_in_hook = 1;
+
+	pthread_mutex_lock(&fd_mutex);
+
+	/* Call resursively */
+	result = epoll_createp(size);
+	if (result >= 0) {
+		save_backtrace(&bt);
+		add_fd(result, caller, &bt);
+	}
+	/* printf might call malloc, so protect it too. */
+	if (print_to_console)
+		fprintf(stderr, "epoll_create(%d) returns %d\n",
+			size, result);
+
+	pthread_mutex_unlock(&fd_mutex);
+
+	thread_in_hook = 0;
+
+	return result;
+}
+
+int epoll_create1(int flags)
+{
+	int result;
+	const void *caller = __builtin_return_address(0);
+	struct backtrace bt;
+
+	do_init();
+
+	if (thread_in_hook) {
+		return epoll_create1p(flags);
+	}
+
+	thread_in_hook = 1;
+
+	pthread_mutex_lock(&fd_mutex);
+
+	/* Call resursively */
+	result = epoll_create1p(flags);
+	if (result >= 0) {
+		save_backtrace(&bt);
+		add_fd(result, caller, &bt);
+	}
+	/* printf might call malloc, so protect it too. */
+	if (print_to_console)
+		fprintf(stderr, "epoll_create1(%d) returns %d\n",
+			flags, result);
 
 	pthread_mutex_unlock(&fd_mutex);
 
@@ -660,9 +740,10 @@ int close(int fd)
 
 	/* Call resursively */
 	result = closep(fd);
-
-	save_backtrace(&bt);
-	del_fd(fd, caller, &bt, 1);
+	if (!result) {
+		save_backtrace(&bt);
+		del_fd(fd, caller, &bt, 1);
+	}
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
@@ -674,7 +755,6 @@ int close(int fd)
 	thread_in_hook = 0;
 
 	return result;
-
 }
 
 /*
