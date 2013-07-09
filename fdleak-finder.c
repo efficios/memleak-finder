@@ -234,8 +234,7 @@ del_fd(int fd, const void *caller, struct backtrace *bt, int needclose)
 			char *caller_symbol;
 
 			caller_symbol = get_symbol(caller);
-			fprintf(stderr,
-				"[warning] trying to free unallocated fd %d caller %p <%s>\n",
+			fdl_printf("[warning] trying to free unallocated fd %d caller %p <%s>\n",
 				fd, caller, caller_symbol);
 			print_bt(bt);
 			free(caller_symbol);
