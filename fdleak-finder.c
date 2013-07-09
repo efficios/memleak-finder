@@ -58,6 +58,8 @@ static int (*acceptp)(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 static int (*accept4p)(int sockfd, struct sockaddr *addr, socklen_t *addrlen,
 		int flags);
 static int (*shm_openp)(const char *name, int oflag, mode_t mode);
+static int (*pipep)(int pipefd[2]);
+static int (*pipe2p)(int pipefd[2], int flags);
 static int (*closep)(int fd);
 /* TODO: recvmsg, recvmmsg unix socket */
 
@@ -229,7 +231,9 @@ do_init(void)
 	socketp = (int (*) (int, int, int)) dlsym(RTLD_NEXT, "socket");
 	acceptp = (int (*) (int, struct sockaddr *, socklen_t *)) dlsym(RTLD_NEXT, "accept");
 	accept4p = (int (*) (int, struct sockaddr *, socklen_t *, int)) dlsym(RTLD_NEXT, "accept4");
-	shm_openp = (int (*) (const char *name, int oflag, mode_t mode)) dlsym(RTLD_NEXT, "shm_open");
+	shm_openp = (int (*) (const char *, int, mode_t)) dlsym(RTLD_NEXT, "shm_open");
+	pipep = (int (*) (int [2])) dlsym(RTLD_NEXT, "pipe");
+	pipe2p = (int (*) (int [2], int)) dlsym(RTLD_NEXT, "pipe2");
 	closep = (int (*) (int)) dlsym(RTLD_NEXT, "close");
 
 	env = getenv("FDLEAK_FINDER_PRINT");
@@ -554,8 +558,82 @@ int shm_open(const char *name, int oflag, mode_t mode)
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "shm_openp(%s,%d,%d) returns %d\n",
+		fprintf(stderr, "shm_open(%s,%d,%d) returns %d\n",
 			name, oflag, mode, result);
+
+	pthread_mutex_unlock(&fd_mutex);
+
+	thread_in_hook = 0;
+
+	return result;
+}
+
+int pipe(int pipefd[2])
+{
+	int result;
+	const void *caller = __builtin_return_address(0);
+	struct backtrace bt[2];
+
+	do_init();
+
+	if (thread_in_hook) {
+		return pipep(pipefd);
+	}
+
+	thread_in_hook = 1;
+
+	pthread_mutex_lock(&fd_mutex);
+
+	/* Call resursively */
+	result = pipep(pipefd);
+
+	if (!result) {
+		save_backtrace(&bt[0]);
+		save_backtrace(&bt[1]);
+		add_fd(pipefd[0], caller, &bt[0]);
+		add_fd(pipefd[1], caller, &bt[1]);
+	}
+	/* printf might call malloc, so protect it too. */
+	if (print_to_console)
+		fprintf(stderr, "pipe([%d,%d]) returns %d\n",
+			pipefd[0], pipefd[1], result);
+
+	pthread_mutex_unlock(&fd_mutex);
+
+	thread_in_hook = 0;
+
+	return result;
+}
+
+int pipe2(int pipefd[2], int flags)
+{
+	int result;
+	const void *caller = __builtin_return_address(0);
+	struct backtrace bt[2];
+
+	do_init();
+
+	if (thread_in_hook) {
+		return pipe2p(pipefd, flags);
+	}
+
+	thread_in_hook = 1;
+
+	pthread_mutex_lock(&fd_mutex);
+
+	/* Call resursively */
+	result = pipe2p(pipefd, flags);
+
+	if (!result) {
+		save_backtrace(&bt[0]);
+		save_backtrace(&bt[1]);
+		add_fd(pipefd[0], caller, &bt[0]);
+		add_fd(pipefd[1], caller, &bt[1]);
+	}
+	/* printf might call malloc, so protect it too. */
+	if (print_to_console)
+		fprintf(stderr, "pipe2([%d,%d], %d) returns %d\n",
+			pipefd[0], pipefd[1], flags, result);
 
 	pthread_mutex_unlock(&fd_mutex);
 
