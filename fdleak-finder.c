@@ -752,6 +752,33 @@ int epoll_create1(int flags)
 	return result;
 }
 
+void memleak_finder_export_fd(int fd)
+{
+	const void *caller = __builtin_return_address(0);
+	struct backtrace bt;
+
+	do_init();
+
+	thread_in_hook = 1;
+
+	pthread_mutex_lock(&fd_mutex);
+
+	if (fd >= 0) {
+		save_backtrace(&bt);
+		add_fd(fd, caller, &bt);
+	}
+
+	/* printf might call malloc, so protect it too. */
+	if (print_to_console)
+		fdl_printf("memleak_finder_export_fd(%d)\n",
+			fd);
+
+	pthread_mutex_unlock(&fd_mutex);
+
+	thread_in_hook = 0;
+}
+
+
 int close(int fd)
 {
 	int result;
