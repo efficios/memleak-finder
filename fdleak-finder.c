@@ -36,6 +36,7 @@
 #include <stdarg.h>
 #include <execinfo.h>
 #include <sys/epoll.h>
+#include <sys/prctl.h>	/* prctl */
 #include "hlist.h"
 
 #include "jhash.h"
@@ -43,9 +44,38 @@
 #define BACKTRACE_LEN			16
 #define MAX_NUM_FD			65536
 #define DEFAULT_PRINT_BACKTRACE_LEN	2
+#define PROCNAME_LEN			17
+
+#ifdef __linux__
+#include <syscall.h>
+#endif
+
+#if defined(_syscall0)
+_syscall0(pid_t, gettid)
+#elif defined(__NR_gettid)
+#include <unistd.h>
+static inline pid_t gettid(void)
+{
+	return syscall(__NR_gettid);
+}
+#else
+#include <sys/types.h>
+#include <unistd.h>
+
+/* Fall-back on getpid for tid if not available. */
+static inline pid_t gettid(void)
+{
+	return getpid();
+}
+#endif
+
+#define fdl_printf(fmt, args...) \
+	fprintf(stderr, "[fdleak %s %ld/%ld] "  fmt, \
+		proc_name, (long) getpid(), (long) gettid(), ## args)
 
 static volatile int print_to_console,
 		print_backtrace_len = DEFAULT_PRINT_BACKTRACE_LEN;
+static char proc_name[PROCNAME_LEN];
 
 static pthread_mutex_t fd_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -149,14 +179,14 @@ void print_bt(struct backtrace *bt)
 	if (empty)
 		return;
 
-	fprintf(stderr, "[backtrace]\n");
+	fdl_printf("[backtrace]\n");
 	for (j = 0; j < BACKTRACE_LEN && j < print_backtrace_len; j++) {
 		if (!bt->ptrs[j])
 			continue;
 		if (bt->symbols)
-			fprintf(stderr, " %p <%s>\n", bt->ptrs[j], bt->symbols[j]);
+			fdl_printf(" %p <%s>\n", bt->ptrs[j], bt->symbols[j]);
 		else
-			fprintf(stderr, " %p\n", bt->ptrs[j]);
+			fdl_printf(" %p\n", bt->ptrs[j]);
 	}
 }
 
@@ -176,7 +206,7 @@ add_fd(int fd, const void *caller, struct backtrace *bt)
 	caller_symbol = get_symbol(caller);
 	cds_hlist_for_each_entry(e, node, head, hlist) {
 		if (fd == e->fd) {
-			fprintf(stderr, "[warning] add_fd fd %d is already there, caller %p <%s>\n",
+			fdl_printf("[warning] add_fd fd %d is already there, caller %p <%s>\n",
 				fd, caller, caller_symbol);
 			print_bt(bt);
 			//assert(0);	/* already there */
@@ -226,6 +256,7 @@ do_init(void)
 	if (initialized)
 		return;
 
+	(void) prctl(PR_GET_NAME, (unsigned long) proc_name, 0, 0, 0);
 	openp = (int (*) (const char *, int, mode_t)) dlsym(RTLD_NEXT, "open");
 	creatp = (int (*) (const char *, mode_t)) dlsym(RTLD_NEXT, "creat");
 	dupp = (int (*) (int)) dlsym(RTLD_NEXT, "dup");
@@ -284,7 +315,7 @@ int open(const char *pathname, int flags, ...)
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "open(%p,%d,%d) returns %d\n",
+		fdl_printf("open(%p,%d,%d) returns %d\n",
 			pathname, flags, mode, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -320,7 +351,7 @@ int creat(const char *pathname, mode_t mode)
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "creat(%p,%d) returns %d\n",
+		fdl_printf("creat(%p,%d) returns %d\n",
 			pathname, mode, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -355,7 +386,7 @@ int dup(int oldfd)
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "dup(%d) returns %d\n",
+		fdl_printf("dup(%d) returns %d\n",
 			oldfd, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -392,7 +423,7 @@ int dup2(int oldfd, int newfd)
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "dup2(%d,%d) returns %d\n",
+		fdl_printf("dup2(%d,%d) returns %d\n",
 			oldfd, newfd, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -429,7 +460,7 @@ int dup3(int oldfd, int newfd, int flags)
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "dup3(%d,%d,%d) returns %d\n",
+		fdl_printf("dup3(%d,%d,%d) returns %d\n",
 			oldfd, newfd, flags, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -464,7 +495,7 @@ int socket(int domain, int type, int protocol)
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "socket(%d,%d,%d) returns %d\n",
+		fdl_printf("socket(%d,%d,%d) returns %d\n",
 			domain, type, protocol, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -499,7 +530,7 @@ int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "accept(%d,%p,%p) returns %d\n",
+		fdl_printf("accept(%d,%p,%p) returns %d\n",
 			sockfd, addr, addrlen, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -535,7 +566,7 @@ int accept4(int sockfd, struct sockaddr *addr, socklen_t *addrlen,
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "accept4(%d,%p,%p,%d) returns %d\n",
+		fdl_printf("accept4(%d,%p,%p,%d) returns %d\n",
 			sockfd, addr, addrlen, flags, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -570,7 +601,7 @@ int shm_open(const char *name, int oflag, mode_t mode)
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "shm_open(%s,%d,%d) returns %d\n",
+		fdl_printf("shm_open(%s,%d,%d) returns %d\n",
 			name, oflag, mode, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -607,7 +638,7 @@ int pipe(int pipefd[2])
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "pipe([%d,%d]) returns %d\n",
+		fdl_printf("pipe([%d,%d]) returns %d\n",
 			pipefd[0], pipefd[1], result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -644,7 +675,7 @@ int pipe2(int pipefd[2], int flags)
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "pipe2([%d,%d], %d) returns %d\n",
+		fdl_printf("pipe2([%d,%d], %d) returns %d\n",
 			pipefd[0], pipefd[1], flags, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -678,7 +709,7 @@ int epoll_create(int size)
 	}
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "epoll_create(%d) returns %d\n",
+		fdl_printf("epoll_create(%d) returns %d\n",
 			size, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -712,7 +743,7 @@ int epoll_create1(int flags)
 	}
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "epoll_create1(%d) returns %d\n",
+		fdl_printf("epoll_create1(%d) returns %d\n",
 			flags, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -747,7 +778,7 @@ int close(int fd)
 
 	/* printf might call malloc, so protect it too. */
 	if (print_to_console)
-		fprintf(stderr, "close(%d) returns %d\n",
+		fdl_printf("close(%d) returns %d\n",
 			fd, result);
 
 	pthread_mutex_unlock(&fd_mutex);
@@ -779,7 +810,7 @@ void init_fd_tracking(void)
 			continue;
 		add_fd(result, NULL, NULL);
 		if (print_to_console) {
-			fprintf(stderr, "FD %d found at initialization\n",
+			fdl_printf("FD %d found at initialization\n",
 				result);
 		}
 	}
@@ -797,7 +828,7 @@ void print_leaks(void)
 
 		head = &fd_table[i];
 		cds_hlist_for_each_entry(e, node, head, hlist) {
-			fprintf(stderr, "[leak] fd: %d caller: %p <%s>\n",
+			fdl_printf("[leak] fd: %d caller: %p <%s>\n",
 				e->fd, e->caller, e->caller_symbol);
 			print_bt(&e->bt);
 		}
