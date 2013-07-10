@@ -43,7 +43,7 @@
 
 #define BACKTRACE_LEN			16
 #define MAX_NUM_FD			65536
-#define DEFAULT_PRINT_BACKTRACE_LEN	2
+#define DEFAULT_PRINT_BACKTRACE_LEN	3
 #define PROCNAME_LEN			17
 
 #ifdef __linux__
