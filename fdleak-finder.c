@@ -37,6 +37,7 @@
 #include <execinfo.h>
 #include <sys/epoll.h>
 #include <sys/prctl.h>	/* prctl */
+#include <errno.h>
 #include "hlist.h"
 
 #include "jhash.h"
