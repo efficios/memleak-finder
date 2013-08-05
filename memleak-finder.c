@@ -238,6 +238,15 @@ realloc(void *ptr, size_t size)
 	void *result;
 	const void *caller = __builtin_return_address(0);
 
+	/*
+	 * Return NULL if called on an address returned by
+	 * static_calloc(). TODO: mimick realloc behavior instead.
+	 */
+	if ((char *) ptr >= static_calloc_buf &&
+			(char *) ptr < static_calloc_buf + STATIC_CALLOC_LEN) {
+		return NULL;
+	}
+
 	do_init();
 
 	if (thread_in_hook) {
@@ -340,6 +349,14 @@ void
 free(void *ptr)
 {
 	const void *caller = __builtin_return_address(0);
+
+	/*
+	 * Ensure that we skip memory allocated by static_calloc().
+	 */
+	if ((char *) ptr >= static_calloc_buf &&
+			(char *) ptr < static_calloc_buf + STATIC_CALLOC_LEN) {
+		return;
+	}
 
 	do_init();
 
