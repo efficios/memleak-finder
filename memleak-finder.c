@@ -50,6 +50,7 @@ static __thread int thread_in_hook;
 #define STATIC_CALLOC_LEN	4096
 static char static_calloc_buf[STATIC_CALLOC_LEN];
 static size_t static_calloc_len;
+static pthread_mutex_t static_calloc_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #define MH_HASH_BITS	20	/* 1 M entries, hardcoded for now */
 #define MH_TABLE_SIZE	(1 << MH_HASH_BITS)
@@ -157,10 +158,14 @@ void *static_calloc(size_t nmemb, size_t size)
 {
 	size_t prev_len;
 
-	if (nmemb * size > sizeof(static_calloc_buf) - static_calloc_len)
+	pthread_mutex_lock(&static_calloc_mutex);
+	if (nmemb * size > sizeof(static_calloc_buf) - static_calloc_len) {
+		pthread_mutex_unlock(&static_calloc_mutex);
 		return NULL;
+	}
 	prev_len = static_calloc_len;
 	static_calloc_len += nmemb * size;
+	pthread_mutex_unlock(&static_calloc_mutex);
 	return &static_calloc_buf[prev_len];
 }
 
