@@ -160,7 +160,7 @@ void *static_calloc(size_t nmemb, size_t size)
 	if (nmemb * size > sizeof(static_calloc_buf) - static_calloc_len)
 		return NULL;
 	prev_len = static_calloc_len;
-	static_calloc_len += nmemb + size;
+	static_calloc_len += nmemb * size;
 	return &static_calloc_buf[prev_len];
 }
 
